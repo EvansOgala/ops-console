@@ -1,0 +1,38 @@
+app-id: org.evans.OpsConsole
+runtime: org.gnome.Platform
+runtime-version: "48"
+sdk: org.gnome.Sdk
+command: org.evans.OpsConsole
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=x11
+  - --share=network
+  - --filesystem=home
+  - --talk-name=org.freedesktop.Flatpak
+
+modules:
+  - name: python3-psutil
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --no-deps --no-build-isolation --prefix=/app .
+    sources:
+      - type: git
+        url: https://github.com/giampaolo/psutil.git
+        tag: release-5.9.8
+
+  - name: ops-console
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 run-ops-console.sh /app/bin/org.evans.OpsConsole
+      - install -Dm644 main.py /app/share/org.evans.OpsConsole/main.py
+      - install -Dm644 ui.py /app/share/org.evans.OpsConsole/ui.py
+      - install -Dm644 network_forensics.py /app/share/org.evans.OpsConsole/network_forensics.py
+      - install -Dm644 updater.py /app/share/org.evans.OpsConsole/updater.py
+      - install -Dm644 settings.py /app/share/org.evans.OpsConsole/settings.py
+      - install -Dm644 org.evans.OpsConsole.desktop /app/share/applications/org.evans.OpsConsole.desktop
+      - install -Dm644 org.evans.OpsConsole.metainfo.xml /app/share/metainfo/org.evans.OpsConsole.metainfo.xml
+      - install -Dm644 org.evans.OpsConsole.svg /app/share/icons/hicolor/scalable/apps/org.evans.OpsConsole.svg
+    sources:
+      - type: dir
+        path: .

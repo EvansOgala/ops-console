@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.evans.OpsConsole</id>
+  <name>Ops Console</name>
+  <summary>Inspect network activity and launch system update tasks</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <launchable type="desktop-id">org.evans.OpsConsole.desktop</launchable>
+  <provides>
+    <binary>org.evans.OpsConsole</binary>
+  </provides>
+  <description>
+    <p>
+      Ops Console combines live network connection inspection with update checks
+      and host terminal update launch actions for Linux package managers.
+    </p>
+  </description>
+  <developer id="org.evans">
+    <name>Evans</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0.0" date="2026-02-25"/>
+  </releases>
+</component>

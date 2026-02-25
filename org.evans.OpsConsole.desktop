@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Ops Console
+Comment=Network forensics and update orchestration
+Exec=org.evans.OpsConsole
+Icon=org.evans.OpsConsole
+Terminal=false
+Categories=Utility;System;Monitor;
+StartupNotify=true
+StartupWMClass=OpsConsole
