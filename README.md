@@ -1,35 +1,57 @@
-# Ops Console (Starter)
+# Ops Console
+
+GTK4 operations console for network connection inspection and update orchestration.
 
 ## Features
 
-- Network Forensics tab:
-  - live process/socket list
-  - suspicious connection flagging
-  - reverse DNS on double-click
-- Update Orchestrator tab:
-  - detect package managers
-  - check available updates for pacman / flatpak / apt
+- Live process and socket list
+- Suspicious external connection flagging
+- Reverse DNS lookup on selected connections
+- Update checks for pacman, flatpak, and apt
+- Launch supported update commands in an available terminal emulator
+- Light and dark GTK4 themes
 
-## Run
+## Runtime Dependencies
+
+- Python 3
+- GTK4
+- PyGObject
+- python-psutil
+- Optional: `checkupdates` from `pacman-contrib` for richer pacman update checks
+- A supported terminal emulator for update launch actions
+
+On Arch Linux:
 
 ```bash
-cd /home/evans/Documents/ops-console
+sudo pacman -S --needed python python-gobject gtk4 python-psutil xterm
+```
+
+## Run From Source
+
+```bash
+cd ~/Documents/ops-console
 python3 main.py
 ```
 
-## Optional
+## Packaging
 
-Install `psutil` for richer network/process insights:
+This repository now includes an AUR-ready `ops-console-git` package:
+
+- [PKGBUILD](./PKGBUILD)
+- [.SRCINFO](./.SRCINFO)
+
+To build it locally on Arch Linux:
 
 ```bash
-pip install psutil
+cd ~/Documents/ops-console
+makepkg -si
 ```
 
-## Build AppImage
+## Notes
 
-```bash
-cd /home/evans/Documents/ops-console
-python3 -m pip install --user pyinstaller
-# also install appimagetool system-wide, or place it at ./tools/appimagetool.AppImage
-./build-appimage.sh
-```
+- Update launch features depend on a terminal emulator and the relevant package manager being installed.
+- Settings are stored in `~/.config/ops_console/settings.json`.
+
+## License
+
+MIT

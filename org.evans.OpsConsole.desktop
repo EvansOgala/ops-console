@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Ops Console
-Comment=Network forensics and update orchestration
+Comment=GTK4 network forensics and update orchestration
 Exec=org.evans.OpsConsole
 Icon=org.evans.OpsConsole
 Terminal=false

@@ -1,389 +1,335 @@
-import threading
-import tkinter as tk
-from pathlib import Path
-from tkinter import messagebox, ttk
+from __future__ import annotations
 
+import threading
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import GLib, Gtk
+
+from gtk_style import THEMES, install_css
 from network_forensics import collect_connections, reverse_dns
 from settings import load_settings, save_settings
 from updater import can_launch_updates_from_app, check_all_updates, detect_managers, run_update_in_terminal
 
-THEMES = {
-    "dark": {
-        "root": "#0f172a",
-        "panel": "#111827",
-        "card": "#0b1220",
-        "line": "#1f2937",
-        "text": "#e2e8f0",
-        "muted": "#94a3b8",
-        "entry": "#020617",
-        "entry_fg": "#dbeafe",
-        "accent": "#2563eb",
-        "accent_hover": "#3b82f6",
-        "accent_press": "#1d4ed8",
-        "accent_text": "#eff6ff",
-        "select": "#2563eb",
-        "warn": "#f87171",
-    },
-    "light": {
-        "root": "#f1f5f9",
-        "panel": "#ffffff",
-        "card": "#f8fafc",
-        "line": "#dbe3ee",
-        "text": "#0f172a",
-        "muted": "#475569",
-        "entry": "#ffffff",
-        "entry_fg": "#0f172a",
-        "accent": "#2563eb",
-        "accent_hover": "#3b82f6",
-        "accent_press": "#1d4ed8",
-        "accent_text": "#eff6ff",
-        "select": "#93c5fd",
-        "warn": "#dc2626",
-    },
-}
 
-
-class RoundedButton(tk.Canvas):
-    def __init__(self, parent, text, command, width=118, height=34, radius=14):
-        super().__init__(parent, width=width, height=height, bd=0, highlightthickness=0, relief="flat", cursor="hand2")
-        self.command = command
-        self.text = text
-        self.width = width
-        self.height = height
-        self.radius = radius
-        self.pressed = False
-        self.enabled = True
-        self.colors = {
-            "bg": "#2563eb",
-            "hover": "#3b82f6",
-            "press": "#1d4ed8",
-            "fg": "#eff6ff",
-            "container": "#0f172a",
-            "disabled": "#475569",
-        }
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        self.bind("<ButtonPress-1>", self._on_press)
-        self.bind("<ButtonRelease-1>", self._on_release)
-        self._draw()
-
-    def configure_theme(self, palette, container_bg):
-        self.colors.update(
-            {
-                "bg": palette["accent"],
-                "hover": palette["accent_hover"],
-                "press": palette["accent_press"],
-                "fg": palette["accent_text"],
-                "container": container_bg,
-            }
-        )
-        self._draw()
-
-    def _rounded(self, color):
-        w, h, r = self.width, self.height, self.radius
-        self.create_arc(0, 0, 2 * r, 2 * r, start=90, extent=90, fill=color, outline=color)
-        self.create_arc(w - 2 * r, 0, w, 2 * r, start=0, extent=90, fill=color, outline=color)
-        self.create_arc(0, h - 2 * r, 2 * r, h, start=180, extent=90, fill=color, outline=color)
-        self.create_arc(w - 2 * r, h - 2 * r, w, h, start=270, extent=90, fill=color, outline=color)
-        self.create_rectangle(r, 0, w - r, h, fill=color, outline=color)
-        self.create_rectangle(0, r, w, h - r, fill=color, outline=color)
-
-    def _draw(self):
-        self.delete("all")
-        self.configure(bg=self.colors["container"])
-        color = self.colors["disabled"] if not self.enabled else (self.colors["press"] if self.pressed else self.colors["bg"])
-        self._rounded(color)
-        self.create_text(self.width // 2, self.height // 2, text=self.text, fill=self.colors["fg"], font=("Adwaita Sans", 10, "bold"))
-
-    def _on_enter(self, _event):
-        if self.enabled and not self.pressed:
-            self.delete("all")
-            self.configure(bg=self.colors["container"])
-            self._rounded(self.colors["hover"])
-            self.create_text(self.width // 2, self.height // 2, text=self.text, fill=self.colors["fg"], font=("Adwaita Sans", 10, "bold"))
-
-    def _on_leave(self, _event):
-        self.pressed = False
-        self._draw()
-
-    def _on_press(self, _event):
-        if not self.enabled:
-            return
-        self.pressed = True
-        self._draw()
-
-    def _on_release(self, _event):
-        if not self.enabled:
-            return
-        run = self.pressed
-        self.pressed = False
-        self._draw()
-        if run:
-            self.command()
-
-    def set_enabled(self, enabled: bool):
-        self.enabled = enabled
-        self.configure(cursor="hand2" if enabled else "arrow")
-        self._draw()
-
-
-class OpsConsole:
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.root.title("Ops Console")
-        self.root.geometry("1180x760")
-        self.root.minsize(980, 640)
+class OpsConsoleApp(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.evans.OpsConsole")
+        self.window: Gtk.ApplicationWindow | None = None
+        self.css_provider: Gtk.CssProvider | None = None
 
         self.settings = load_settings()
-        self.theme_var = tk.StringVar(value=self.settings.get("theme", "dark"))
-        self.refresh_var = tk.IntVar(value=self.settings.get("refresh_interval_ms", 1200))
+        self.theme_name = self.settings.get("theme", "dark")
+        if self.theme_name not in THEMES:
+            self.theme_name = "dark"
         self.system_manager = "none"
-
         self.conn_rows = []
 
-        self._build_ui()
-        self.apply_theme(self.theme_var.get())
-        self._refresh_connections_once()
-        self._schedule_connections_refresh()
-        self.refresh_updates()
+        self.refresh_spin: Gtk.SpinButton | None = None
+        self.status_label: Gtk.Label | None = None
+        self.detected_label: Gtk.Label | None = None
+        self.theme_dropdown: Gtk.DropDown | None = None
+        self.conn_list: Gtk.ListBox | None = None
+        self.update_buffer: Gtk.TextBuffer | None = None
+
+    def do_activate(self):
+        if self.window is None:
+            self._build_ui()
+            self._refresh_connections_once()
+            self.refresh_updates()
+            GLib.timeout_add(int(self.settings.get("refresh_interval_ms", 1200)), self._scheduled_refresh)
+        self.window.present()
 
     def _build_ui(self):
-        self.style = ttk.Style()
-        self.style.theme_use("clam")
+        self.window = Gtk.ApplicationWindow(application=self)
+        self.window.set_title("Ops Console")
+        self.window.set_default_size(1180, 760)
+        self.window.set_size_request(980, 640)
+        self.css_provider = install_css(self.window, self.theme_name)
 
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        root.set_margin_top(12)
+        root.set_margin_bottom(12)
+        root.set_margin_start(12)
+        root.set_margin_end(12)
+        self.window.set_child(root)
 
-        header = tk.Frame(self.root, padx=14, pady=12)
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(1, weight=1)
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        header.add_css_class("toolbar")
+        header.add_css_class("section")
+        root.append(header)
 
-        self.title = tk.Label(header, text="Ops Console", font=("Adwaita Sans", 22, "bold"))
-        self.title.grid(row=0, column=0, sticky="w")
-        self.subtitle = tk.Label(header, text="Network Forensics + Update Orchestrator", font=("Adwaita Sans", 10))
-        self.subtitle.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        titles.set_hexpand(True)
+        header.append(titles)
 
-        self.theme_box = ttk.Combobox(header, textvariable=self.theme_var, values=("dark", "light"), state="readonly", width=10, style="App.TCombobox")
-        self.theme_box.grid(row=0, column=2, rowspan=2, sticky="e")
-        self.theme_box.bind("<<ComboboxSelected>>", lambda _e: self.apply_theme(self.theme_var.get()))
+        title = Gtk.Label(label="Ops Console")
+        title.set_xalign(0.0)
+        title.add_css_class("title-1")
+        titles.append(title)
 
-        self.tabs = ttk.Notebook(self.root)
-        self.tabs.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
+        subtitle = Gtk.Label(label="Network Forensics + Update Orchestrator")
+        subtitle.set_xalign(0.0)
+        subtitle.add_css_class("dim-label")
+        titles.append(subtitle)
 
-        self._build_network_tab()
-        self._build_updates_tab()
+        self.theme_dropdown = Gtk.DropDown.new_from_strings(["dark", "light"])
+        self.theme_dropdown.set_selected(0 if self.theme_name == "dark" else 1)
+        self.theme_dropdown.connect("notify::selected", self._on_theme_changed)
+        header.append(self.theme_dropdown)
 
-        self.status_var = tk.StringVar(value="Ready")
-        self.status = tk.Label(self.root, textvariable=self.status_var, anchor="w", padx=14, pady=8, font=("Adwaita Sans", 10))
-        self.status.grid(row=2, column=0, sticky="ew")
+        notebook = Gtk.Notebook()
+        notebook.set_hexpand(True)
+        notebook.set_vexpand(True)
+        root.append(notebook)
 
-    def _build_network_tab(self):
-        tab = tk.Frame(self.tabs)
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
-        self.tabs.add(tab, text="Network")
+        notebook.append_page(self._build_network_tab(), Gtk.Label(label="Network"))
+        notebook.append_page(self._build_updates_tab(), Gtk.Label(label="Updates"))
 
-        controls = tk.Frame(tab, padx=12, pady=10)
-        controls.grid(row=0, column=0, sticky="ew")
+        self.status_label = Gtk.Label(label="Ready")
+        self.status_label.set_xalign(0.0)
+        self.status_label.add_css_class("dim-label")
+        root.append(self.status_label)
 
-        self.btn_refresh_conn = RoundedButton(controls, "Refresh", self._refresh_connections_once, width=90)
-        self.btn_refresh_conn.pack(side="left")
+    def _build_network_tab(self) -> Gtk.Widget:
+        tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
 
-        tk.Label(controls, text="Interval (ms)", font=("Adwaita Sans", 10, "bold")).pack(side="left", padx=(12, 6))
-        self.refresh_spin = ttk.Spinbox(controls, from_=300, to=5000, increment=100, textvariable=self.refresh_var, width=7, style="App.TSpinbox", command=self._on_refresh_interval)
-        self.refresh_spin.pack(side="left")
-        self.refresh_spin.bind("<Return>", lambda _e: self._on_refresh_interval())
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        controls.add_css_class("section")
+        tab.append(controls)
 
-        frame = tk.Frame(tab, padx=12, pady=0)
-        frame.grid(row=1, column=0, sticky="nsew")
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
+        refresh_btn = Gtk.Button(label="Refresh")
+        refresh_btn.add_css_class("pill")
+        refresh_btn.connect("clicked", lambda _b: self._refresh_connections_once())
+        controls.append(refresh_btn)
 
-        self.conn_tree = ttk.Treeview(frame, columns=("flag", "process", "pid", "local", "remote", "status"), show="headings", style="App.Treeview")
-        for col, title, width in (
-            ("flag", "Alert", 70),
-            ("process", "Process", 220),
-            ("pid", "PID", 70),
-            ("local", "Local", 210),
-            ("remote", "Remote", 280),
-            ("status", "State", 110),
-        ):
-            self.conn_tree.heading(col, text=title)
-            self.conn_tree.column(col, width=width, anchor="w")
-        self.conn_tree.grid(row=0, column=0, sticky="nsew")
-        self.conn_tree.bind("<Double-1>", self._on_connection_double_click)
+        label = Gtk.Label(label="Interval (ms)")
+        label.add_css_class("dim-label")
+        controls.append(label)
 
-        s = ttk.Scrollbar(frame, orient="vertical", command=self.conn_tree.yview)
-        self.conn_tree.configure(yscrollcommand=s.set)
-        s.grid(row=0, column=1, sticky="ns")
+        adjustment = Gtk.Adjustment(
+            value=float(self.settings.get("refresh_interval_ms", 1200)),
+            lower=300,
+            upper=5000,
+            step_increment=100,
+            page_increment=100,
+            page_size=0,
+        )
+        self.refresh_spin = Gtk.SpinButton(adjustment=adjustment, climb_rate=0, digits=0)
+        self.refresh_spin.connect("value-changed", self._on_refresh_interval)
+        controls.append(self.refresh_spin)
 
-    def _build_updates_tab(self):
-        tab = tk.Frame(self.tabs)
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
-        self.tabs.add(tab, text="Updates")
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_hexpand(True)
+        scroller.set_vexpand(True)
+        scroller.add_css_class("card")
+        tab.append(scroller)
 
-        controls = tk.Frame(tab, padx=12, pady=10)
-        controls.grid(row=0, column=0, sticky="ew")
+        self.conn_list = Gtk.ListBox()
+        self.conn_list.add_css_class("boxed-list")
+        self.conn_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.conn_list.connect("row-activated", self._on_connection_activated)
+        scroller.set_child(self.conn_list)
+        return tab
 
-        self.btn_refresh_upd = RoundedButton(controls, "Check Updates", self.refresh_updates, width=128)
-        self.btn_refresh_upd.pack(side="left")
+    def _build_updates_tab(self) -> Gtk.Widget:
+        tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
 
-        self.btn_run_system = RoundedButton(controls, "Run System Update", self._run_system_update, width=168)
-        self.btn_run_system.pack(side="left", padx=(8, 0))
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        controls.add_css_class("section")
+        tab.append(controls)
 
-        self.btn_run_flatpak = RoundedButton(controls, "Run Flatpak Update", self._run_flatpak_update, width=170)
-        self.btn_run_flatpak.pack(side="left", padx=(8, 0))
+        refresh_btn = Gtk.Button(label="Check Updates")
+        refresh_btn.add_css_class("pill")
+        refresh_btn.connect("clicked", lambda _b: self.refresh_updates())
+        controls.append(refresh_btn)
 
-        self.detected_label = tk.Label(controls, text="Managers: -", font=("Adwaita Sans", 10))
-        self.detected_label.pack(side="left", padx=(12, 0))
+        self.system_update_btn = Gtk.Button(label="Run System Update")
+        self.system_update_btn.add_css_class("flat-pill")
+        self.system_update_btn.connect("clicked", lambda _b: self._run_system_update())
+        controls.append(self.system_update_btn)
 
-        frame = tk.Frame(tab, padx=12, pady=0)
-        frame.grid(row=1, column=0, sticky="nsew")
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
+        self.flatpak_update_btn = Gtk.Button(label="Run Flatpak Update")
+        self.flatpak_update_btn.add_css_class("flat-pill")
+        self.flatpak_update_btn.connect("clicked", lambda _b: self._run_flatpak_update())
+        controls.append(self.flatpak_update_btn)
 
-        self.update_text = tk.Text(frame, wrap="word", font=("Adwaita Mono", 10), state="disabled")
-        self.update_text.grid(row=0, column=0, sticky="nsew")
+        self.detected_label = Gtk.Label(label="Managers: -")
+        self.detected_label.add_css_class("dim-label")
+        controls.append(self.detected_label)
 
-        s = ttk.Scrollbar(frame, orient="vertical", command=self.update_text.yview)
-        self.update_text.configure(yscrollcommand=s.set)
-        s.grid(row=0, column=1, sticky="ns")
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_hexpand(True)
+        scroller.set_vexpand(True)
+        scroller.add_css_class("card")
+        tab.append(scroller)
 
-    def _on_refresh_interval(self):
-        try:
-            value = int(self.refresh_var.get())
-        except Exception:  # noqa: BLE001
-            value = 1200
+        text = Gtk.TextView()
+        text.set_editable(False)
+        text.set_monospace(True)
+        text.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.update_buffer = text.get_buffer()
+        scroller.set_child(text)
+        return tab
+
+    def _on_theme_changed(self, dropdown: Gtk.DropDown, _param: object):
+        item = dropdown.get_selected_item()
+        if item is None:
+            return
+        theme_name = item.get_string()
+        self.apply_theme(theme_name)
+
+    def apply_theme(self, theme_name: str):
+        if theme_name not in THEMES:
+            theme_name = "dark"
+        self.theme_name = theme_name
+        self.settings["theme"] = theme_name
+        save_settings(self.settings)
+        if self.window is not None:
+            self.css_provider = install_css(self.window, theme_name)
+
+    def _on_refresh_interval(self, _spin: Gtk.SpinButton):
+        if self.refresh_spin is None:
+            return
+        value = int(self.refresh_spin.get_value())
         value = max(300, min(5000, value))
-        self.refresh_var.set(value)
+        self.refresh_spin.set_value(value)
         self.settings["refresh_interval_ms"] = value
         save_settings(self.settings)
-        self.status_var.set(f"Refresh interval set to {value} ms")
+        self._set_status(f"Refresh interval set to {value} ms")
 
-    def _schedule_connections_refresh(self):
+    def _scheduled_refresh(self) -> bool:
         self._refresh_connections_once(set_status=False)
-        self.root.after(int(self.refresh_var.get()), self._schedule_connections_refresh)
+        GLib.timeout_add(int(self.settings.get("refresh_interval_ms", 1200)), self._scheduled_refresh)
+        return False
 
     def _refresh_connections_once(self, set_status: bool = True):
         known = self.settings.get("known_processes", [])
         rows = collect_connections(known)
         self.conn_rows = rows
 
-        current = set(self.conn_tree.get_children())
-        row_ids = set()
-        for i, r in enumerate(rows):
-            row_id = f"row-{i}"
-            row_ids.add(row_id)
-            values = (
-                "!" if r.suspicious else "",
-                r.process,
-                str(r.pid),
-                r.laddr,
-                r.raddr,
-                r.status,
-            )
-            if row_id in current:
-                self.conn_tree.item(row_id, values=values)
-            else:
-                self.conn_tree.insert("", "end", iid=row_id, values=values)
+        if self.conn_list is not None:
+            while True:
+                row = self.conn_list.get_row_at_index(0)
+                if row is None:
+                    break
+                self.conn_list.remove(row)
 
-        for orphan in current - row_ids:
-            self.conn_tree.delete(orphan)
+            for idx, row_data in enumerate(rows):
+                row = self._make_connection_row(idx, row_data)
+                self.conn_list.append(row)
 
         if set_status:
             alerts = sum(1 for r in rows if r.suspicious)
-            self.status_var.set(f"Connections: {len(rows)} | Alerts: {alerts}")
+            self._set_status(f"Connections: {len(rows)} | Alerts: {alerts}")
 
-    def _on_connection_double_click(self, _event):
-        selected = self.conn_tree.selection()
-        if not selected:
+    def _make_connection_row(self, index: int, row_data) -> Gtk.ListBoxRow:
+        row = Gtk.ListBoxRow()
+        row.set_name(str(index))
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        outer.set_margin_top(6)
+        outer.set_margin_bottom(6)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+        row.set_child(outer)
+
+        title = Gtk.Label(label=f"{'! ' if row_data.suspicious else ''}{row_data.process} (PID {row_data.pid})")
+        title.set_xalign(0.0)
+        outer.append(title)
+
+        meta = Gtk.Label(label=f"Local: {row_data.laddr}   Remote: {row_data.raddr}")
+        meta.set_xalign(0.0)
+        meta.set_wrap(True)
+        meta.add_css_class("dim-label")
+        outer.append(meta)
+
+        state = Gtk.Label(label=f"State: {row_data.status}")
+        state.set_xalign(0.0)
+        outer.append(state)
+        return row
+
+    def _on_connection_activated(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow):
+        try:
+            row_data = self.conn_rows[int(row.get_name())]
+        except Exception:
             return
-        item = self.conn_tree.item(selected[0], "values")
-        remote = item[4]
+        remote = row_data.raddr
         if remote == "-":
-            messagebox.showinfo("Connection", "No remote address for this socket.")
+            self._show_message("Connection", "No remote address for this socket.")
             return
         host = remote.split(":", 1)[0]
         dns = reverse_dns(host)
-        messagebox.showinfo("Reverse DNS", f"IP: {host}\nHost: {dns}")
+        self._show_message("Reverse DNS", f"IP: {host}\nHost: {dns}")
 
     def refresh_updates(self):
         managers = detect_managers()
-        self.detected_label.configure(text=f"Managers: {', '.join(managers) if managers else 'none'}")
+        if self.detected_label is not None:
+            self.detected_label.set_text(f"Managers: {', '.join(managers) if managers else 'none'}")
         self.system_manager = "pacman" if "pacman" in managers else ("apt" if "apt" in managers else "none")
         can_launch, reason = can_launch_updates_from_app()
-        self.btn_run_system.set_enabled(can_launch and self.system_manager != "none")
-        self.btn_run_flatpak.set_enabled(can_launch and ("flatpak" in managers))
-        if not can_launch:
-            self.status_var.set(reason)
+        self.system_update_btn.set_sensitive(can_launch and self.system_manager != "none")
+        self.flatpak_update_btn.set_sensitive(can_launch and ("flatpak" in managers))
+        if not can_launch and reason:
+            self._set_status(reason)
 
         def task():
             results = check_all_updates()
-            self.root.after(0, lambda: self._render_updates(results))
+            GLib.idle_add(self._render_updates, results)
 
         threading.Thread(target=task, daemon=True).start()
 
     def _run_system_update(self):
         if self.system_manager == "none":
-            messagebox.showinfo("System Update", "No supported system package manager detected (pacman/apt).")
+            self._show_message("System Update", "No supported system package manager detected (pacman/apt).")
             return
         ok, info = run_update_in_terminal(self.system_manager)
         if ok:
-            self.status_var.set(info)
+            self._set_status(info)
             return
-        self.status_var.set("Failed to launch system update")
-        messagebox.showerror("System Update", info)
+        self._set_status("Failed to launch system update")
+        self._show_message("System Update", info)
 
     def _run_flatpak_update(self):
         managers = detect_managers()
         if "flatpak" not in managers:
-            messagebox.showinfo("Flatpak Update", "Flatpak is not available on this system.")
+            self._show_message("Flatpak Update", "Flatpak is not available on this system.")
             return
         ok, info = run_update_in_terminal("flatpak")
         if ok:
-            self.status_var.set(info)
+            self._set_status(info)
             return
-        self.status_var.set("Failed to launch Flatpak update")
-        messagebox.showerror("Flatpak Update", info)
+        self._set_status("Failed to launch Flatpak update")
+        self._show_message("Flatpak Update", info)
 
     def _render_updates(self, results):
         lines = []
-        for r in results:
-            lines.append(f"[{r.manager}] {r.summary}")
-            lines.append(f"Command: {r.command}")
-            if r.details:
-                lines.append(r.details)
+        for result in results:
+            lines.append(f"[{result.manager}] {result.summary}")
+            lines.append(f"Command: {result.command}")
+            if result.details:
+                lines.append(result.details)
             lines.append("-" * 50)
-
         text = "\n".join(lines) if lines else "No supported managers detected."
-        self.update_text.configure(state="normal")
-        self.update_text.delete("1.0", tk.END)
-        self.update_text.insert("1.0", text)
-        self.update_text.configure(state="disabled")
-        self.status_var.set("Update check finished")
+        if self.update_buffer is not None:
+            self.update_buffer.set_text(text)
+        self._set_status("Update check finished")
+        return False
 
-    def apply_theme(self, theme_name: str):
-        if theme_name not in THEMES:
-            theme_name = "dark"
-        self.theme_var.set(theme_name)
-        self.settings["theme"] = theme_name
-        save_settings(self.settings)
+    def _show_message(self, title: str, body: str):
+        if self.window is None:
+            return
+        dialog = Gtk.MessageDialog(
+            transient_for=self.window,
+            modal=True,
+            buttons=Gtk.ButtonsType.OK,
+            text=title,
+            secondary_text=body,
+        )
+        dialog.connect("response", lambda d, _r: d.close())
+        dialog.present()
 
-        p = THEMES[theme_name]
-        self.style.configure("App.TCombobox", fieldbackground=p["entry"], foreground=p["entry_fg"], bordercolor=p["line"], padding=4, font=("Adwaita Sans", 10))
-        self.style.map("App.TCombobox", fieldbackground=[("readonly", p["entry"])], foreground=[("readonly", p["entry_fg"])])
-        self.style.configure("App.TSpinbox", fieldbackground=p["entry"], foreground=p["entry_fg"], bordercolor=p["line"], padding=4, font=("Adwaita Sans", 10))
-        self.style.configure("App.Treeview", background=p["card"], fieldbackground=p["card"], foreground=p["text"], rowheight=28, borderwidth=0, font=("Adwaita Sans", 10))
-        self.style.map("App.Treeview", background=[("selected", p["select"])], foreground=[("selected", p["text"])])
-
-        self.root.configure(bg=p["root"])
-        self.title.configure(bg=p["root"], fg=p["text"])
-        self.subtitle.configure(bg=p["root"], fg=p["muted"])
-        self.detected_label.configure(bg=p["panel"], fg=p["muted"])
-        self.status.configure(bg=p["root"], fg=p["muted"])
-
-        for btn in (self.btn_refresh_conn, self.btn_refresh_upd, self.btn_run_system, self.btn_run_flatpak):
-            btn.configure_theme(p, btn.master.cget("bg"))
-
-        self.update_text.configure(bg=p["card"], fg=p["text"], insertbackground=p["text"]) 
+    def _set_status(self, text: str):
+        if self.status_label is not None:
+            self.status_label.set_text(text)
