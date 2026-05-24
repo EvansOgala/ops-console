@@ -1,5 +1,5 @@
 pkgname=ops-console-git
-pkgver=0.r0.g0000000
+pkgver=0.r4.g0f0efcb
 pkgrel=1
 pkgdesc="GTK4 operations console for network inspection and update checks"
 arch=('x86_64')
