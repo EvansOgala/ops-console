@@ -1,5 +1,6 @@
 import socket
 from dataclasses import dataclass
+from ipaddress import ip_address
 
 try:
     import psutil  # type: ignore
@@ -13,23 +14,53 @@ class ConnectionRow:
     process: str
     laddr: str
     raddr: str
+    remote_host: str
+    username: str
+    exe: str
+    cmdline: str
     status: str
     suspicious: bool
 
 
-def _safe_process_name(pid: int) -> str:
+def _safe_process_info(pid: int) -> tuple[str, str, str, str]:
     if psutil is None:
-        return "unknown"
+        return "unknown", "-", "-", "-"
     try:
-        return psutil.Process(pid).name()
+        proc = psutil.Process(pid)
     except Exception:  # noqa: BLE001
-        return "unknown"
+        return "unknown", "-", "-", "-"
+
+    try:
+        name = proc.name()
+    except Exception:  # noqa: BLE001
+        name = "unknown"
+
+    try:
+        username = proc.username()
+    except Exception:  # noqa: BLE001
+        username = "-"
+
+    try:
+        exe = proc.exe()
+    except Exception:  # noqa: BLE001
+        exe = "-"
+
+    try:
+        cmdline = " ".join(proc.cmdline())
+    except Exception:  # noqa: BLE001
+        cmdline = "-"
+
+    return name, username, exe, cmdline
 
 
 def _is_private_ip(host: str) -> bool:
     if not host:
         return True
-    return host.startswith("10.") or host.startswith("192.168.") or host.startswith("172.16.") or host.startswith("127.")
+    try:
+        addr = ip_address(host)
+    except ValueError:
+        return True
+    return addr.is_private or addr.is_loopback or addr.is_link_local
 
 
 def _is_suspicious(status: str, host: str, process: str, known: set[str]) -> bool:
@@ -67,7 +98,7 @@ def collect_connections(known_processes: list[str]) -> list[ConnectionRow]:
             remote_host = ""
             remote = "-"
 
-        process = _safe_process_name(c.pid)
+        process, username, exe, cmdline = _safe_process_info(c.pid)
         suspicious = _is_suspicious(c.status, remote_host, process, known)
 
         out.append(
@@ -76,6 +107,10 @@ def collect_connections(known_processes: list[str]) -> list[ConnectionRow]:
                 process=process,
                 laddr=local,
                 raddr=remote,
+                remote_host=remote_host,
+                username=username,
+                exe=exe,
+                cmdline=cmdline,
                 status=c.status,
                 suspicious=suspicious,
             )

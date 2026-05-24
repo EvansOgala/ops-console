@@ -8,7 +8,17 @@ a = Analysis(
     datas=[],
     hiddenimports=[],
     hookspath=[],
-    hooksconfig={},
+    hooksconfig={
+        'gi': {
+            'module-versions': {
+                'Gtk': '4.0',
+                'Gdk': '4.0',
+            },
+            'icons': ['Adwaita'],
+            'themes': ['Default'],
+            'languages': ['en'],
+        },
+    },
     runtime_hooks=[],
     excludes=[],
     noarchive=False,

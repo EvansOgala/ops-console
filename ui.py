@@ -25,11 +25,14 @@ class OpsConsoleApp(Gtk.Application):
             self.theme_name = "dark"
         self.system_manager = "none"
         self.conn_rows = []
+        self.visible_conn_rows = []
 
         self.refresh_spin: Gtk.SpinButton | None = None
         self.status_label: Gtk.Label | None = None
         self.detected_label: Gtk.Label | None = None
         self.theme_dropdown: Gtk.DropDown | None = None
+        self.search_entry: Gtk.SearchEntry | None = None
+        self.alerts_only_check: Gtk.CheckButton | None = None
         self.conn_list: Gtk.ListBox | None = None
         self.update_buffer: Gtk.TextBuffer | None = None
 
@@ -120,6 +123,16 @@ class OpsConsoleApp(Gtk.Application):
         self.refresh_spin.connect("value-changed", self._on_refresh_interval)
         controls.append(self.refresh_spin)
 
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text("Search connections")
+        self.search_entry.set_hexpand(True)
+        self.search_entry.connect("search-changed", lambda _entry: self._render_connections())
+        controls.append(self.search_entry)
+
+        self.alerts_only_check = Gtk.CheckButton(label="Alerts only")
+        self.alerts_only_check.connect("toggled", lambda _check: self._render_connections())
+        controls.append(self.alerts_only_check)
+
         scroller = Gtk.ScrolledWindow()
         scroller.set_hexpand(True)
         scroller.set_vexpand(True)
@@ -208,6 +221,38 @@ class OpsConsoleApp(Gtk.Application):
         known = self.settings.get("known_processes", [])
         rows = collect_connections(known)
         self.conn_rows = rows
+        self._render_connections()
+
+        if set_status:
+            alerts = sum(1 for r in rows if r.suspicious)
+            self._set_status(f"Connections: {len(rows)} | Alerts: {alerts}")
+
+    def _render_connections(self):
+        query = ""
+        if self.search_entry is not None:
+            query = self.search_entry.get_text().strip().lower()
+        alerts_only = bool(self.alerts_only_check and self.alerts_only_check.get_active())
+
+        rows = []
+        for row_data in self.conn_rows:
+            if alerts_only and not row_data.suspicious:
+                continue
+            haystack = " ".join(
+                [
+                    row_data.process,
+                    str(row_data.pid),
+                    row_data.laddr,
+                    row_data.raddr,
+                    row_data.status,
+                    row_data.username,
+                    row_data.exe,
+                    row_data.cmdline,
+                ]
+            ).lower()
+            if query and query not in haystack:
+                continue
+            rows.append(row_data)
+        self.visible_conn_rows = rows
 
         if self.conn_list is not None:
             while True:
@@ -219,10 +264,6 @@ class OpsConsoleApp(Gtk.Application):
             for idx, row_data in enumerate(rows):
                 row = self._make_connection_row(idx, row_data)
                 self.conn_list.append(row)
-
-        if set_status:
-            alerts = sum(1 for r in rows if r.suspicious)
-            self._set_status(f"Connections: {len(rows)} | Alerts: {alerts}")
 
     def _make_connection_row(self, index: int, row_data) -> Gtk.ListBoxRow:
         row = Gtk.ListBoxRow()
@@ -248,20 +289,49 @@ class OpsConsoleApp(Gtk.Application):
         state = Gtk.Label(label=f"State: {row_data.status}")
         state.set_xalign(0.0)
         outer.append(state)
+
+        proc = Gtk.Label(label=f"User: {row_data.username}   Exe: {row_data.exe}")
+        proc.set_xalign(0.0)
+        proc.set_wrap(True)
+        proc.add_css_class("dim-label")
+        outer.append(proc)
         return row
 
     def _on_connection_activated(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow):
         try:
-            row_data = self.conn_rows[int(row.get_name())]
+            row_data = self.visible_conn_rows[int(row.get_name())]
         except Exception:
             return
         remote = row_data.raddr
         if remote == "-":
             self._show_message("Connection", "No remote address for this socket.")
             return
-        host = remote.split(":", 1)[0]
-        dns = reverse_dns(host)
-        self._show_message("Reverse DNS", f"IP: {host}\nHost: {dns}")
+        host = row_data.remote_host
+        if not host:
+            self._show_message("Connection", "No remote address for this socket.")
+            return
+        self._set_status(f"Resolving {host}...")
+
+        def task():
+            dns = reverse_dns(host)
+            GLib.idle_add(self._show_connection_details, row_data, dns)
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _show_connection_details(self, row_data, dns: str):
+        body = (
+            f"Process: {row_data.process} (PID {row_data.pid})\n"
+            f"User: {row_data.username}\n"
+            f"Status: {row_data.status}\n"
+            f"Local: {row_data.laddr}\n"
+            f"Remote: {row_data.raddr}\n"
+            f"Reverse DNS: {dns}\n"
+            f"Executable: {row_data.exe}\n"
+            f"Command: {row_data.cmdline}"
+        )
+        self._show_message("Connection Details", body)
+        self._set_status("Connection details ready")
+        return False
 
     def refresh_updates(self):
         managers = detect_managers()

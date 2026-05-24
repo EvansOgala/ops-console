@@ -15,11 +15,20 @@ class UpdateResult:
 
 def _run(cmd: list[str]) -> tuple[int, str]:
     try:
-        c = subprocess.run(cmd, text=True, capture_output=True, timeout=60)
+        c = subprocess.run(cmd, text=True, capture_output=True, timeout=60, cwd=Path.home())
     except Exception as exc:  # noqa: BLE001
         return 1, str(exc)
     out = (c.stdout or "") + (c.stderr or "")
-    return c.returncode, out.strip()
+    return c.returncode, _clean_command_output(out)
+
+
+def _clean_command_output(text: str) -> str:
+    ignored = (
+        "shell-init: error retrieving current directory:",
+        "getcwd: cannot access parent directories:",
+    )
+    lines = [line for line in text.splitlines() if not any(part in line for part in ignored)]
+    return "\n".join(lines).strip()
 
 
 def detect_managers() -> list[str]:

@@ -59,6 +59,8 @@ entry,
 dropdown,
 spinbutton,
 notebook > stack,
+notebook > header,
+notebook > header > tabs,
 scrolledwindow,
 textview,
 frame > border {{
@@ -80,11 +82,42 @@ notebook > stack {{
   border: 1px solid {palette['border']};
 }}
 
+notebook > header {{
+  border: 1px solid {palette['border']};
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  padding: 0;
+}}
+
+notebook > header > tabs {{
+  padding: 4px 10px;
+}}
+
 entry,
 spinbutton,
 textview text {{
   background: {palette['entry_bg']};
   color: {palette['entry_fg']};
+}}
+
+spinbutton button {{
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: {palette['text']};
+  min-height: 22px;
+  min-width: 28px;
+  padding: 2px 6px;
+}}
+
+spinbutton button:hover {{
+  background: {palette['row_hover']};
+  color: {palette['accent_fg']};
+}}
+
+spinbutton button image {{
+  color: {palette['text']};
+  -gtk-icon-shadow: none;
 }}
 
 label,
@@ -145,8 +178,23 @@ list.boxed-list row:selected {{
 }}
 
 notebook > header > tabs > tab {{
+  background: transparent;
+  border: 0;
   border-radius: 999px;
-  padding: 8px 14px;
+  color: {palette['muted']};
+  margin: 0 3px;
+  padding: 8px 16px;
+}}
+
+notebook > header > tabs > tab:hover {{
+  background: {palette['row_hover']};
+  color: {palette['text']};
+}}
+
+notebook > header > tabs > tab:checked {{
+  background: {palette['accent']};
+  box-shadow: inset 0 -2px 0 {palette['accent_hover']};
+  color: {palette['text']};
 }}
 """.encode("utf-8")
 
